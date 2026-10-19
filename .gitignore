@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+SETUP.txt
+deployment.json
+*.key
+*.pem
+id_ed25519*
+*.db
+*.sqlite*
+dist/
+work/
