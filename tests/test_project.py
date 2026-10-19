@@ -4,6 +4,7 @@ import io
 import json
 import sys
 import unittest
+import subprocess
 from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -92,6 +93,34 @@ class AccountTests(unittest.TestCase):
         sftpctl.apply_update(api, 'alice', lambda u: u.update(status=0))
         self.assertEqual(api.result[1], '/users/alice?disconnect=1')
         self.assertNotIn('password', api.result[2])
+
+class FirewallTests(unittest.TestCase):
+    def invoke(self, status, bind='0.0.0.0', skip=False):
+        with patch.object(deploy.shutil, 'which', return_value='/usr/sbin/ufw'), \
+             patch.object(deploy.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, status, '')) as run, \
+             contextlib.redirect_stdout(io.StringIO()):
+            deploy.configure_firewall(12022, 18080, bind, skip)
+            return [call.args[0] for call in run.call_args_list]
+    def test_active_custom_ports(self):
+        self.assertEqual(self.invoke('Status: active\n'), [['/usr/sbin/ufw', 'status'],
+            ['/usr/sbin/ufw', 'allow', '12022/tcp'], ['/usr/sbin/ufw', 'allow', '18080/tcp']])
+    def test_inactive_is_not_enabled(self):
+        self.assertEqual(self.invoke('Status: inactive\n'), [['/usr/sbin/ufw', 'status']])
+    def test_loopback_backend_not_opened(self):
+        self.assertEqual(self.invoke('Status: active\n', '127.0.0.1'),
+            [['/usr/sbin/ufw', 'status'], ['/usr/sbin/ufw', 'allow', '12022/tcp']])
+    def test_explicit_skip(self):
+        self.assertEqual(self.invoke('Status: active\n', skip=True), [])
+    def test_absent_ufw_no_commands(self):
+        with patch.object(deploy.shutil, 'which', return_value=None), patch.object(deploy.subprocess, 'run') as run, contextlib.redirect_stdout(io.StringIO()):
+            deploy.configure_firewall(2022, 8080, '0.0.0.0')
+            run.assert_not_called()
+    def test_failure_is_reported_without_reset(self):
+        with patch.object(deploy.shutil, 'which', return_value='/usr/sbin/ufw'), \
+             patch.object(deploy.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, 'ufw')), \
+             contextlib.redirect_stderr(io.StringIO()) as err:
+            deploy.configure_firewall(2022, 8080, '0.0.0.0')
+            self.assertIn('手动检查', err.getvalue())
 
 class WebsiteTests(unittest.TestCase):
     def test_no_production_connection_or_credentials(self):

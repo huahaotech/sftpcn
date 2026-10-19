@@ -20,6 +20,34 @@ VERSION = '0.1.0'
 SFTPGO_VERSION = '2.7.6'
 IMAGE = 'drakkan/sftpgo:v' + SFTPGO_VERSION
 
+def configure_firewall(sftp_port, web_port, web_bind, skip=False):
+    """Only add rules to active UFW; never enable or reset it."""
+    if skip:
+        print('已按 --skip-firewall 跳过系统防火墙设置。')
+        return
+    ufw = shutil.which('ufw')
+    if not ufw:
+        print('未检测到 UFW，未修改系统防火墙；如使用其他防火墙，请自行放行服务端口。')
+        return
+    env = dict(os.environ, LC_ALL='C', LANG='C')
+    try:
+        result = subprocess.run([ufw, 'status'], check=True, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                env=env, timeout=15)
+        if not re.search(r'^Status:\s*active\s*$', result.stdout, re.M):
+            print('UFW 未启用，保持现状，不自动启用或改写已有规则。')
+            return
+        ports = [sftp_port]
+        if not ipaddress.ip_address(web_bind).is_loopback:
+            ports.append(web_port)
+        for port in dict.fromkeys(ports):
+            subprocess.run([ufw, 'allow', f'{port}/tcp'], check=True, text=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           env=env, timeout=15)
+            print(f'UFW 已放行 TCP {port}。')
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f'自动配置 UFW 未完成（{type(exc).__name__}）。服务已安装，请手动检查防火墙规则。', file=sys.stderr)
+
 def run(*args, capture=False, timeout=None):
     return subprocess.run(args, check=True, text=True,
                           stdout=subprocess.PIPE if capture else None, timeout=timeout).stdout
@@ -83,6 +111,7 @@ def main():
     p.add_argument('--install-dir', default='/opt/sftpcn')
     p.add_argument('--name', default='sftpcn')
     p.add_argument('--print-config', action='store_true')
+    p.add_argument('--skip-firewall', action='store_true', help='跳过自动放行 UFW 端口')
     args = p.parse_args()
     if any(not 1024 <= v <= 65535 for v in [args.sftp_port, args.web_port]):
         p.error('端口须在 1024–65535 之间；保留原有 SSH 22 端口')
@@ -172,12 +201,13 @@ def main():
             time.sleep(1)
     else:
         raise RuntimeError('健康检查未通过。请运行 docker logs ' + args.name + ' 排查；数据已保留。')
+    configure_firewall(args.sftp_port, args.web_port, args.web_bind, args.skip_firewall)
     print(f'\n安装完成，已加载 {count} 项中文翻译。')
     print(setup.read_text(encoding='utf-8'))
     if args.web_bind == '127.0.0.1':
         print('后台仅监听本机，请通过 SSH 隧道或反向代理访问。')
     else:
-        print(f'请在安全组/防火墙放行 TCP {args.web_port} 与 {args.sftp_port}，正式使用时配置 HTTPS。')
+        print(f'请确认云安全组放行 TCP {args.web_port} 与 {args.sftp_port}；系统防火墙处理结果见上方。正式使用时配置 HTTPS。')
     print('原有系统 SSH 配置未修改；初始化代码保存在 ' + str(setup))
 
 if __name__ == '__main__':
