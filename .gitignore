@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 .env
 SETUP.txt
+ADMIN.txt
 deployment.json
 *.key
 *.pem

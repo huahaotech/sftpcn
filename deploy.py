@@ -20,9 +20,23 @@ VERSION = '0.1.0'
 SFTPGO_VERSION = '2.7.6'
 IMAGE = 'drakkan/sftpgo:v' + SFTPGO_VERSION
 
-def run(*args, capture=False):
+def run(*args, capture=False, timeout=None):
     return subprocess.run(args, check=True, text=True,
-                          stdout=subprocess.PIPE if capture else None).stdout
+                          stdout=subprocess.PIPE if capture else None, timeout=timeout).stdout
+
+def obtain_image():
+    existing = subprocess.run(['docker', 'image', 'inspect', '--format', '{{.Id}}', IMAGE],
+                              text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    if existing.returncode == 0:
+        print('使用本地已存在的固定版本镜像：' + IMAGE, flush=True)
+        return IMAGE, existing.stdout.strip()
+    for reference in [IMAGE, 'ghcr.io/drakkan/sftpgo:v' + SFTPGO_VERSION]:
+        try:
+            run('docker', 'pull', reference, timeout=120)
+            return reference, run('docker', 'image', 'inspect', '--format', '{{.Id}}', reference, capture=True).strip()
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            print('暂时无法访问镜像仓库：' + reference, flush=True)
+    raise RuntimeError('两个官方仓库均无法连接。请先按 README 导入可信的官方镜像，再重新安装。')
 
 def config(sftp_port, web_port, bind, code):
     return {
@@ -107,8 +121,7 @@ def main():
     if args.name in run('docker', 'ps', '-a', '--format', '{{.Names}}', capture=True).splitlines():
         p.error('同名容器已存在，未做修改')
     print('正在下载官方 SFTPGo 社区版镜像…', flush=True)
-    run('docker', 'pull', IMAGE)
-    image_id = run('docker', 'image', 'inspect', '--format', '{{.Id}}', IMAGE, capture=True).strip()
+    image_ref, image_id = obtain_image()
     base.mkdir(mode=0o755)
     for sub in ['config', 'ui', 'state', 'data', 'data/data', 'data/backups']:
         directory = base / sub
@@ -137,7 +150,7 @@ def main():
     cfg.write_text(json.dumps(config(args.sftp_port, args.web_port, args.web_bind, code), ensure_ascii=False, indent=2), encoding='utf-8')
     os.chown(cfg, 1000, 1000)
     cfg.chmod(0o400)
-    metadata = {'version': VERSION, 'sftpgo_version': SFTPGO_VERSION, 'image': IMAGE,
+    metadata = {'version': VERSION, 'sftpgo_version': SFTPGO_VERSION, 'image': image_ref,
                 'image_id': image_id, 'name': args.name, 'web_port': args.web_port,
                 'sftp_port': args.sftp_port, 'web_bind': args.web_bind}
     (base / 'deployment.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')

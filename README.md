@@ -63,6 +63,27 @@ sudo bash install.sh --web-bind 127.0.0.1
 
 已有相同目录、同名容器或端口被占用时安装器会停止，避免覆盖数据。低于 1024 的端口不受支持，保留系统原有 SSH 服务。
 
+### 国内网络与离线镜像
+
+安装器优先使用本机已有的固定版本镜像，没有时依次尝试 Docker Hub 和官方 GitHub Container Registry；每次拉取最多等待 120 秒。不会修改系统镜像源，也不使用未知的第三方镜像。
+
+如果两个官方仓库都无法访问，可以在可联网、CPU 架构与目标机相同的可信机器上执行：
+
+```bash
+docker pull drakkan/sftpgo:v2.7.6
+docker save drakkan/sftpgo:v2.7.6 -o sftpgo-v2.7.6.tar
+sha256sum sftpgo-v2.7.6.tar
+```
+
+将镜像文件通过自己的 SSH 通道传到目标服务器，核对传输前后的 SHA256，再执行：
+
+```bash
+sudo docker load -i sftpgo-v2.7.6.tar
+sudo bash install.sh
+```
+
+安装器会复用已导入的固定版本镜像，无需再连接远程镜像仓库。
+
 ## 第一次使用
 
 1. 创建管理员并进入“用户管理”，点击“新建用户”。
